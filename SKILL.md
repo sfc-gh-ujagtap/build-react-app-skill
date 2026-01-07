@@ -12,10 +12,10 @@ This skill guides you through building a Next.js application from scratch and de
 ## Step 1: Understand Requirements
 
 Before writing any code, clarify with the user:
-- What data should the app use? (Search for tables/views in their Snowflake account)
+- What data should the app use? (Search for tables/views in their Snowflake account using `snowflake_object_search`)
 - Any specific UI preferences? (Colors, layout, branding)
 
-**CRITICAL: Never use mock/sample/dummy data.** Always connect to real Snowflake tables. If the user hasn't specified tables, use `snowflake_object_search` to find relevant tables in their account.
+Note: Always connect to real Snowflake tables rather than using mock/sample data. If the user hasn't specified tables, help them find relevant ones in their account.
 ---
 
 ## Step 2: Create Next.js Project
@@ -81,9 +81,9 @@ module.exports = nextConfig
 
 ### Create UI Components
 
-### Data Fetching (CRITICAL)
+### Data Fetching
 
-**NEVER use mock data, sample data, or placeholder values.** All data must come from real Snowflake tables via:
+All data should come from real Snowflake tables via:
 - Server-side API routes using `snowflake-sdk`
 - Direct queries to user's Snowflake tables
 
@@ -97,6 +97,16 @@ export async function querySnowflake(sql: string) {
   });
   // Execute query and return real data
 }
+```
+
+When running in SPCS, use the injected OAuth token:
+```typescript
+const token = fs.readFileSync('/snowflake/session/token', 'utf8');
+snowflake.createConnection({
+  token: token,
+  authenticator: 'oauth',
+  // ...
+});
 ```
 
 ## Step 4: Test Locally (REQUIRED)
@@ -125,7 +135,7 @@ ai_browser(
 ### Test Checklist
 - [ ] Page loads without errors
 - [ ] All charts/visualizations render
-- [ ] Data displays correctly (from real Snowflake tables, NOT mock data)
+- [ ] Data displays correctly
 - [ ] Responsive design works
 - [ ] No console errors
 
@@ -135,10 +145,7 @@ ai_browser(
 npm run build
 ```
 
-Fix any build errors before proceeding. Common issues:
-- TypeScript errors
-- Missing dependencies
-- ESLint warnings
+Fix any build errors before proceeding. Note: During `npm run build`, Snowflake connection errors are expected since there's no OAuth token at build time - routes will work at runtime.
 
 ### **USER CONFIRMATION REQUIRED**
 
@@ -258,7 +265,7 @@ spec:
   - name: <app-name>
     image: /<db>/<schema>/<repo>/<image>:latest
     env:
-      HOSTNAME: "0.0.0.0"
+      HOSTNAME: "0.0.0.0"  # Required! Without this, service shows READY but returns "connection refused"
       PORT: "8080"
       NODE_ENV: production
     resources:
@@ -276,8 +283,6 @@ spec:
     port: 8080
     public: true
 ```
-
-**CRITICAL**: `HOSTNAME: "0.0.0.0"` is required! Without it, the service will show READY but return "connection refused".
 
 ---
 
@@ -347,39 +352,11 @@ docker push <registry-url>/<db>/<schema>/<repo>/<image-name>:latest
 ```
 
 ```sql
--- Force service to pull new image (SUSPEND/RESUME won't work!)
+-- Force service to pull new image (SUSPEND/RESUME won't work for image updates!)
 ALTER SERVICE <service_name> FROM SPECIFICATION $$
 <full yaml spec>
 $$;
 ```
-
----
-
-## Critical Gotchas
-
-### 1. HOSTNAME Binding
-**Symptom**: Service READY but "connection refused"
-**Fix**: Set `HOSTNAME: "0.0.0.0"` in service spec
-
-### 2. OAuth Token for Snowflake Connection
-Use SPCS-injected token at `/snowflake/session/token`:
-```typescript
-const token = fs.readFileSync('/snowflake/session/token', 'utf8');
-snowflake.createConnection({
-  token: token,
-  authenticator: 'oauth',
-  // ...
-});
-```
-
-### 3. Image Not Updating
-Use `ALTER SERVICE ... FROM SPECIFICATION` instead of SUSPEND/RESUME.
-
-### 4. Build-time Errors
-During `npm run build`, Snowflake connection errors are expected (no OAuth token at build time). Routes work at runtime.
-
-### 5. No Mock Data
-**NEVER use mock, sample, or dummy data.** Always query real Snowflake tables. If data fetch fails, show an error message rather than falling back to fake data.
 
 ---
 
