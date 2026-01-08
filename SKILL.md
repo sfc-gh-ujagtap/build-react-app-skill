@@ -6,54 +6,48 @@ description: Build and Deploy React/Next.js apps to Snowflake
 # Build and Deploy React/Next.js App to Snowflake SPCS
 
 ## Overview
-This skill guides you through building a Next.js application from scratch and deploying it to Snowflake using Snowpark Container Services (SPCS).
+This skill guides you through building a Next.js application and deploying it to Snowflake using Snowpark Container Services (SPCS).
+
+**Authentication:**
+- **Local development:** External Browser (SSO) - opens browser for login, zero setup
+- **Production (SPCS):** OAuth token - automatic, no setup needed
+
 ---
 
 ## Step 1: Understand Requirements
 
 Before writing any code, clarify with the user:
-- What data should the app use? (Search for tables/views in their Snowflake account using `snowflake_object_search`)
+- What data should the app use? (Search for tables/views using `snowflake_object_search`)
 - Any specific UI preferences? (Colors, layout, branding)
 
-Note: Always connect to real Snowflake tables rather than using mock/sample data. If the user hasn't specified tables, help them find relevant ones in their account.
+**CRITICAL: NEVER use mock/hardcoded data. Always connect to real Snowflake tables.**
+
 ---
 
 ## Step 2: Create Next.js Project
 
 ```bash
-# Create new Next.js project with TypeScript and Tailwind
 npx create-next-app@latest <app-name> --typescript --tailwind --eslint --app --src-dir=false --import-alias="@/*"
-
 cd <app-name>
 ```
 
 ### Install Dependencies
 
 ```bash
-# Initialize shadcn/ui
-npx shadcn@latest init
-
-# Add shadcn components as needed
-npx shadcn@latest add card button table chart
-
-# Additional visualization and utilities
-npm install recharts lucide-react
-
-# Snowflake connector (if connecting to live data)
-npm install snowflake-sdk
+npm install recharts lucide-react clsx tailwind-merge snowflake-sdk
 ```
 
-### Configure next.config.js for Containerization
+### Configure next.config.ts
 
-```javascript
-/** @type {import('next').NextConfig} */
-const nextConfig = {
-  output: 'standalone',
-  experimental: {
-    serverComponentsExternalPackages: ['snowflake-sdk'],
-  },
-}
-module.exports = nextConfig
+```typescript
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+  output: "standalone",
+  serverExternalPackages: ["snowflake-sdk"],
+};
+
+export default nextConfig;
 ```
 
 ---
@@ -64,80 +58,156 @@ module.exports = nextConfig
 ```
 <app-name>/
 ├── app/
-│   ├── page.tsx          # Main dashboard/page
-│   ├── layout.tsx        # Root layout
-│   ├── globals.css       # Global styles
-│   └── api/              # API routes (if needed)
+│   ├── page.tsx
+│   ├── layout.tsx
+│   ├── globals.css
+│   └── api/
 ├── components/
-│   └── ui/               # Reusable UI components
 ├── lib/
-│   ├── data.ts           # Data fetching/generation
-│   ├── snowflake.ts      # Snowflake connection (optional)
-│   └── utils.ts          # Utility functions
+│   ├── snowflake.ts      # Snowflake connection (REQUIRED)
+│   └── utils.ts
 ├── Dockerfile
 ├── service-spec.yaml
-└── next.config.js
+└── next.config.ts
 ```
 
-### Create UI Components
-
-### Data Fetching
-
-All data should come from real Snowflake tables via:
-- Server-side API routes using `snowflake-sdk`
-- Direct queries to user's Snowflake tables
+### Create Snowflake Connection (lib/snowflake.ts)
 
 ```typescript
-// lib/snowflake.ts - Connection setup
-import snowflake from 'snowflake-sdk';
+import snowflake from "snowflake-sdk";
+import fs from "fs";
 
-export async function querySnowflake(sql: string) {
-  const connection = snowflake.createConnection({
-    // Use environment variables or SPCS token
+let connection: snowflake.Connection | null = null;
+let connectionPromise: Promise<snowflake.Connection> | null = null;
+
+snowflake.configure({ logLevel: "ERROR" });
+
+async function getConnection(): Promise<snowflake.Connection> {
+  if (connection) {
+    return connection;
+  }
+
+  if (connectionPromise) {
+    return connectionPromise;
+  }
+
+  connectionPromise = (async () => {
+    let connConfig: snowflake.ConnectionOptions;
+    let useAsyncConnect = false;
+
+    // SPCS environment - use OAuth token
+    const tokenPath = "/snowflake/session/token";
+    if (fs.existsSync(tokenPath)) {
+      const token = fs.readFileSync(tokenPath, "utf8");
+      const host = process.env.SNOWFLAKE_HOST || "";
+      connConfig = {
+        accessUrl: `https://${host}`,
+        account: host.split(".")[0] || "snowflake",
+        authenticator: "OAUTH",
+        token: token,
+        warehouse: process.env.SNOWFLAKE_WAREHOUSE || "COMPUTE_WH",
+        database: process.env.SNOWFLAKE_DATABASE || "<database>",
+        schema: process.env.SNOWFLAKE_SCHEMA || "<schema>",
+      };
+    } else {
+      // Local development - External Browser (SSO)
+      connConfig = {
+        account: process.env.SNOWFLAKE_ACCOUNT || "<account>",
+        username: process.env.SNOWFLAKE_USER || "<username>",
+        authenticator: "EXTERNALBROWSER",
+        warehouse: process.env.SNOWFLAKE_WAREHOUSE || "<warehouse>",
+        database: process.env.SNOWFLAKE_DATABASE || "<database>",
+        schema: process.env.SNOWFLAKE_SCHEMA || "<schema>",
+      };
+      useAsyncConnect = true;
+    }
+
+    const conn = snowflake.createConnection(connConfig);
+
+    if (useAsyncConnect) {
+      await conn.connectAsync(() => {});
+      connection = conn;
+    } else {
+      connection = await new Promise<snowflake.Connection>((resolve, reject) => {
+        conn.connect((err, connResult) => {
+          if (err) {
+            console.error("Snowflake connection error:", err.message);
+            reject(err);
+          } else {
+            resolve(connResult);
+          }
+        });
+      });
+    }
+
+    return connection;
+  })();
+
+  return connectionPromise;
+}
+
+export async function querySnowflake<T>(sql: string): Promise<T[]> {
+  const conn = await getConnection();
+  return new Promise((resolve, reject) => {
+    conn.execute({
+      sqlText: sql,
+      complete: (err, stmt, rows) => {
+        if (err) {
+          console.error("Query error:", err.message);
+          reject(err);
+        } else {
+          resolve((rows || []) as T[]);
+        }
+      },
+    });
   });
-  // Execute query and return real data
 }
 ```
 
-When running in SPCS, use the injected OAuth token:
+**Note:** On first API request locally, a browser window opens for SSO login. Connection is cached for subsequent requests.
+
+### Create API Routes
+
+**All API routes MUST query real Snowflake data:**
+
 ```typescript
-const token = fs.readFileSync('/snowflake/session/token', 'utf8');
-snowflake.createConnection({
-  token: token,
-  authenticator: 'oauth',
-  // ...
-});
+// app/api/data/route.ts
+import { NextResponse } from "next/server";
+import { querySnowflake } from "@/lib/snowflake";
+
+export async function GET() {
+  try {
+    const results = await querySnowflake<{ COL1: string; COL2: number }>(`
+      SELECT COL1, COL2 
+      FROM <DATABASE>.<SCHEMA>.<TABLE>
+      LIMIT 100
+    `);
+    return NextResponse.json(results);
+  } catch (error) {
+    console.error("Error:", error);
+    return NextResponse.json({ error: "Failed to fetch data" }, { status: 500 });
+  }
+}
 ```
+
+---
 
 ## Step 4: Test Locally (REQUIRED)
 
-**CRITICAL: Always test locally before deploying to SPCS.**
-
-### Start Development Server
-
 ```bash
-cd <app-name>
 npm run dev
 ```
 
-The app will run at `http://localhost:3000`
+App runs at `http://localhost:3000`. Browser opens for SSO on first API request.
 
 ### Verify Using Browser Tool
 
-Use `ai_browser` tool to test the application:
 ```
 ai_browser(
   initial_url="http://localhost:3000",
-  instructions="Verify the dashboard loads correctly. Check that all charts render, metrics display, and the layout is responsive."
+  instructions="Verify dashboard loads with REAL Snowflake data."
 )
 ```
-
-### Test Checklist
-- [ ] Page loads without errors
-- [ ] All charts/visualizations render
-- [ ] Data displays correctly
-- [ ] Responsive design works
-- [ ] No console errors
 
 ### Build Test
 
@@ -145,29 +215,13 @@ ai_browser(
 npm run build
 ```
 
-Fix any build errors before proceeding. Note: During `npm run build`, Snowflake connection errors are expected since there's no OAuth token at build time - routes will work at runtime.
-
 ### **USER CONFIRMATION REQUIRED**
 
-**STOP HERE AND WAIT FOR USER CONFIRMATION.**
-
-After local testing, emit the localhost URL and explicitly ask the user:
-
-```
-The app is running at http://localhost:3000
-
-Please review the application and confirm it looks good before I proceed with Snowflake SPCS deployment.
-
-Do you want me to proceed with deployment? (yes/no)
-```
-
-**DO NOT proceed to Step 5 until the user explicitly confirms the app looks correct.**
+**STOP HERE.** Ask user to confirm the app looks correct before SPCS deployment.
 
 ---
 
 ## Step 5: Check SPCS Prerequisites
-
-Run these checks IN ORDER. Stop and resolve before proceeding.
 
 ### Check Current Role
 
@@ -175,52 +229,38 @@ Run these checks IN ORDER. Stop and resolve before proceeding.
 SELECT CURRENT_ROLE(), CURRENT_USER();
 ```
 
-If you need SPCS privileges:
-```sql
-USE ROLE <role_with_spcs_access>;  -- e.g., ACCOUNTADMIN
-```
-
 ### Check/Create Compute Pool
 
 ```sql
+-- List pools accessible to current role (check 'owner' column)
 SHOW COMPUTE POOLS;
-```
 
-**If no usable pool exists:**
-```sql
+-- Verify current role can use the pool (owner must match or have USAGE grant)
+SELECT CURRENT_ROLE();
+-- Pool owner must equal current role, OR run:
+SHOW GRANTS ON COMPUTE POOL <pool_name>;
+
+-- If no accessible pool exists, create one (will be owned by current role):
 CREATE COMPUTE POOL <pool_name>
   MIN_NODES = 1
   MAX_NODES = 1
   INSTANCE_FAMILY = CPU_X64_XS;
 ```
 
-**If pool is SUSPENDED:**
-```sql
-ALTER COMPUTE POOL <pool_name> RESUME;
-```
+**IMPORTANT:** You can only use compute pools owned by your current role or where you have USAGE privilege. If `CREATE SERVICE` fails with "not authorized", switch to a pool your role owns.
 
 ### Check/Create Image Repository
 
 ```sql
 SHOW IMAGE REPOSITORIES;
-```
 
-**If no repository exists:**
-```sql
-CREATE DATABASE IF NOT EXISTS <db>;
-CREATE SCHEMA IF NOT EXISTS <db>.<schema>;
+-- If needed:
 CREATE IMAGE REPOSITORY <db>.<schema>.<repo_name>;
 ```
 
-Get the registry URL from `repository_url` column.
-
-### Verify Local Environment
+### Login to Registry
 
 ```bash
-# Docker running?
-docker info > /dev/null 2>&1 && echo "Docker OK" || echo "FAIL: Start Docker Desktop"
-
-# Login to Snowflake registry
 snow spcs image-registry login --connection <conn>
 ```
 
@@ -229,14 +269,14 @@ snow spcs image-registry login --connection <conn>
 ## Step 6: Create Dockerfile
 
 ```dockerfile
-FROM node:18-alpine AS builder
+FROM node:20-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --legacy-peer-deps
 COPY . .
 RUN npm run build
 
-FROM node:18-alpine AS runner
+FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=8080
@@ -265,7 +305,7 @@ spec:
   - name: <app-name>
     image: /<db>/<schema>/<repo>/<image>:latest
     env:
-      HOSTNAME: "0.0.0.0"  # Required! Without this, service shows READY but returns "connection refused"
+      HOSTNAME: "0.0.0.0"
       PORT: "8080"
       NODE_ENV: production
     resources:
@@ -289,17 +329,10 @@ spec:
 ## Step 8: Build and Push Docker Image
 
 ```bash
-# Build for linux/amd64 (required for SPCS)
 docker build --platform linux/amd64 -t <image-name>:latest .
-
-# Tag with full registry path
 docker tag <image-name>:latest <registry-url>/<db>/<schema>/<repo>/<image-name>:latest
-
-# Push to Snowflake registry
 docker push <registry-url>/<db>/<schema>/<repo>/<image-name>:latest
 ```
-
-Registry URL format: `<orgname>-<acctname>.registry.snowflakecomputing.com`
 
 ---
 
@@ -313,55 +346,35 @@ CREATE SERVICE <service_name>
   $$;
 ```
 
-### Monitor Deployment and Wait for Ready
-
-Poll the service status until it shows READY (may take 2-5 minutes):
+### Monitor and Get URL
 
 ```sql
 SELECT SYSTEM$GET_SERVICE_STATUS('<service_name>');
-```
-
-If status shows errors, check logs:
-```sql
-CALL SYSTEM$GET_SERVICE_LOGS('<service_name>', '0', '<container-name>', 100);
-```
-
-Once READY, get the public URL:
-```sql
 SHOW ENDPOINTS IN SERVICE <service_name>;
 ```
-
-**Emit the ingress URL to the user** from the `ingress_url` column.
 
 ---
 
 ## Step 10: Verify Deployed Application
 
-Use `ai_browser` to verify the deployed app works:
 ```
 ai_browser(
   initial_url="https://<ingress_url>",
-  instructions="Verify the dashboard loads correctly in production."
+  instructions="Verify dashboard loads with real Snowflake data."
 )
 ```
-
-Share the final URL with the user after verification.
 
 ---
 
 ## Updating the Application
 
-After making code changes:
-
 ```bash
-# Rebuild and push
 docker build --platform linux/amd64 -t <image-name>:latest .
 docker tag <image-name>:latest <registry-url>/<db>/<schema>/<repo>/<image-name>:latest
 docker push <registry-url>/<db>/<schema>/<repo>/<image-name>:latest
 ```
 
 ```sql
--- Force service to pull new image (SUSPEND/RESUME won't work for image updates!)
 ALTER SERVICE <service_name> FROM SPECIFICATION $$
 <full yaml spec>
 $$;
@@ -374,12 +387,11 @@ $$;
 | Step | Command/Action |
 |------|----------------|
 | Create project | `npx create-next-app@latest <name> --typescript --tailwind --app` |
-| Install deps | `npm install recharts lucide-react` |
-| Test locally | `npm run dev` → verify at localhost:3000 |
+| Install deps | `npm install recharts lucide-react snowflake-sdk` |
+| Test locally | `npm run dev` → browser opens for SSO |
 | Build | `npm run build` |
 | Docker build | `docker build --platform linux/amd64 -t <img>:latest .` |
 | Push image | `docker push <registry>/<db>/<schema>/<repo>/<img>:latest` |
 | Deploy | `CREATE SERVICE ... FROM SPECIFICATION ...` |
 | Check status | `SELECT SYSTEM$GET_SERVICE_STATUS('<svc>')` |
 | Get URL | `SHOW ENDPOINTS IN SERVICE <svc>` |
-| Update | `ALTER SERVICE <svc> FROM SPECIFICATION ...` |
