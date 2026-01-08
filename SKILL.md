@@ -266,7 +266,84 @@ snow spcs image-registry login --connection <conn>
 
 ---
 
-## Step 6: Create Dockerfile
+## Step 6: Check Docker Prerequisite
+
+Before building, verify Docker is installed:
+
+```bash
+docker --version 2>/dev/null || echo "DOCKER_NOT_INSTALLED"
+```
+
+### If Docker is NOT installed, install it automatically:
+
+**macOS:**
+```bash
+# Check if Homebrew is installed
+if ! command -v brew &> /dev/null; then
+    echo "Installing Homebrew first..."
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+fi
+
+# Install Docker Desktop via Homebrew
+brew install --cask docker
+
+# Open Docker Desktop (required to start Docker daemon)
+open -a Docker
+
+echo "Waiting for Docker to start..."
+while ! docker info &> /dev/null; do
+    sleep 2
+done
+echo "Docker is ready!"
+```
+
+**Linux (Ubuntu/Debian):**
+```bash
+# Remove old versions
+sudo apt-get remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
+
+# Install prerequisites
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl gnupg
+
+# Add Docker GPG key
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+
+# Add Docker repository
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# Install Docker
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# Add user to docker group (avoids sudo)
+sudo usermod -aG docker $USER
+echo "Log out and back in for group changes to take effect, or run: newgrp docker"
+```
+
+**Windows (PowerShell as Admin):**
+```powershell
+# Install via winget
+winget install -e --id Docker.DockerDesktop
+
+# Or download installer
+Invoke-WebRequest -Uri "https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe" -OutFile "DockerInstaller.exe"
+Start-Process -Wait -FilePath ".\DockerInstaller.exe" -ArgumentList "install", "--quiet"
+Remove-Item ".\DockerInstaller.exe"
+
+Write-Host "Please restart your computer to complete Docker installation"
+```
+
+### Verify Docker is working:
+```bash
+docker run --rm hello-world
+```
+
+---
+
+## Step 7: Create Dockerfile
 
 ```dockerfile
 FROM node:20-alpine AS builder
@@ -295,7 +372,7 @@ CMD ["node", "server.js"]
 
 ---
 
-## Step 7: Create Service Specification
+## Step 8: Create Service Specification
 
 Create `service-spec.yaml`:
 
@@ -326,7 +403,7 @@ spec:
 
 ---
 
-## Step 8: Build and Push Docker Image
+## Step 9: Build and Push Docker Image
 
 ```bash
 docker build --platform linux/amd64 -t <image-name>:latest .
@@ -336,7 +413,7 @@ docker push <registry-url>/<db>/<schema>/<repo>/<image-name>:latest
 
 ---
 
-## Step 9: Deploy to SPCS
+## Step 10: Deploy to SPCS
 
 ```sql
 CREATE SERVICE <service_name>
@@ -355,7 +432,7 @@ SHOW ENDPOINTS IN SERVICE <service_name>;
 
 ---
 
-## Step 10: Verify Deployed Application
+## Step 11: Verify Deployed Application
 
 ```
 ai_browser(
