@@ -24,6 +24,40 @@ Before writing any code, clarify with the user:
 
 ---
 
+## Step 1.5: Check Node.js Version (REQUIRED)
+
+Next.js 16+ requires Node.js >= 20.9.0. Check and upgrade if needed:
+
+```bash
+node --version
+```
+
+**If Node < 20.9.0, install Node 20:**
+
+**macOS (Homebrew):**
+```bash
+brew install node@20
+export PATH="/opt/homebrew/opt/node@20/bin:$PATH"
+```
+
+**Or use nvm:**
+```bash
+nvm install 20
+nvm use 20
+```
+
+**Verify before proceeding:**
+```bash
+node --version  # Must show v20.x.x or higher
+```
+
+**IMPORTANT:** If Node 20 is installed via Homebrew as a keg-only formula, you must set the PATH before running npm/npx commands:
+```bash
+PATH="/opt/homebrew/opt/node@20/bin:$PATH" npx create-next-app@latest ...
+```
+
+---
+
 ## Step 2: Create Next.js Project
 
 ```bash
