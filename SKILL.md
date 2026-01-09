@@ -158,7 +158,9 @@ export default nextConfig;
 
 ### Create Snowflake Connection (lib/snowflake.ts)
 
-Uses connection pooling to automatically handle stale connections. The pool evicts idle connections and manages reconnection transparently.
+**Two modes:**
+- **Local development:** Single connection with external browser (SSO) auth - simpler, works with interactive login
+- **Remote (SPCS):** Connection pooling with OAuth token - handles concurrent requests and stale connections
 
 ```typescript
 import snowflake from "snowflake-sdk";
@@ -166,43 +168,56 @@ import fs from "fs";
 
 snowflake.configure({ logLevel: "ERROR" });
 
-let pool: snowflake.Pool<snowflake.Connection> | null = null;
-
-function getOAuthToken(): string | null {
+function isRunningInSPCS(): boolean {
   const tokenPath = "/snowflake/session/token";
-  try {
-    if (fs.existsSync(tokenPath)) {
-      return fs.readFileSync(tokenPath, "utf8");
-    }
-  } catch (error) {
-    // Not in SPCS environment
-  }
-  return null;
+  return fs.existsSync(tokenPath);
 }
+
+// ============ LOCAL DEVELOPMENT: Single Connection ============
+let connection: snowflake.Connection | null = null;
+let connectionPromise: Promise<snowflake.Connection> | null = null;
+
+async function getConnection(): Promise<snowflake.Connection> {
+  if (connection) return connection;
+  if (connectionPromise) return connectionPromise;
+
+  connectionPromise = (async () => {
+    const connConfig: snowflake.ConnectionOptions = {
+      account: process.env.SNOWFLAKE_ACCOUNT || "<account>",
+      username: process.env.SNOWFLAKE_USER || "<username>",
+      authenticator: "EXTERNALBROWSER",
+      warehouse: process.env.SNOWFLAKE_WAREHOUSE || "<warehouse>",
+      database: process.env.SNOWFLAKE_DATABASE || "<database>",
+      schema: process.env.SNOWFLAKE_SCHEMA || "<schema>",
+    };
+
+    const conn = snowflake.createConnection(connConfig);
+    await conn.connectAsync(() => {});
+    connection = conn;
+    return connection;
+  })();
+
+  return connectionPromise;
+}
+
+// ============ REMOTE (SPCS): Connection Pool ============
+let pool: snowflake.Pool<snowflake.Connection> | null = null;
 
 function getPool(): snowflake.Pool<snowflake.Connection> {
   if (pool) return pool;
 
-  const oauthToken = getOAuthToken();
+  const token = fs.readFileSync("/snowflake/session/token", "utf8");
+  const host = process.env.SNOWFLAKE_HOST || "";
 
-  const connConfig: snowflake.ConnectionOptions = oauthToken
-    ? {
-        host: process.env.SNOWFLAKE_HOST,
-        account: process.env.SNOWFLAKE_ACCOUNT || "<account>",
-        token: oauthToken,
-        authenticator: "oauth",
-        warehouse: process.env.SNOWFLAKE_WAREHOUSE || "<warehouse>",
-        database: process.env.SNOWFLAKE_DATABASE || "<database>",
-        schema: process.env.SNOWFLAKE_SCHEMA || "<schema>",
-      }
-    : {
-        account: process.env.SNOWFLAKE_ACCOUNT || "<account>",
-        username: process.env.SNOWFLAKE_USER || "<username>",
-        authenticator: "EXTERNALBROWSER",
-        warehouse: process.env.SNOWFLAKE_WAREHOUSE || "<warehouse>",
-        database: process.env.SNOWFLAKE_DATABASE || "<database>",
-        schema: process.env.SNOWFLAKE_SCHEMA || "<schema>",
-      };
+  const connConfig: snowflake.ConnectionOptions = {
+    accessUrl: `https://${host}`,
+    account: host.split(".")[0] || "snowflake",
+    authenticator: "OAUTH",
+    token: token,
+    warehouse: process.env.SNOWFLAKE_WAREHOUSE || "<warehouse>",
+    database: process.env.SNOWFLAKE_DATABASE || "<database>",
+    schema: process.env.SNOWFLAKE_SCHEMA || "<schema>",
+  };
 
   pool = snowflake.createPool(connConfig, {
     max: 10,
@@ -214,33 +229,54 @@ function getPool(): snowflake.Pool<snowflake.Connection> {
   return pool;
 }
 
+// ============ Unified Query Function ============
 export async function querySnowflake<T>(sql: string): Promise<T[]> {
-  const connectionPool = getPool();
-
-  return new Promise((resolve, reject) => {
-    connectionPool
-      .use(async (clientConnection) => {
-        return new Promise<T[]>((res, rej) => {
-          clientConnection.execute({
-            sqlText: sql,
-            complete: (err, stmt, rows) => {
-              if (err) {
-                console.error("Query error:", err.message);
-                rej(err);
-              } else {
-                res((rows || []) as T[]);
-              }
-            },
+  if (isRunningInSPCS()) {
+    // Remote: Use connection pool
+    const connectionPool = getPool();
+    return new Promise((resolve, reject) => {
+      connectionPool
+        .use(async (clientConnection) => {
+          return new Promise<T[]>((res, rej) => {
+            clientConnection.execute({
+              sqlText: sql,
+              complete: (err, stmt, rows) => {
+                if (err) {
+                  console.error("Query error:", err.message);
+                  rej(err);
+                } else {
+                  res((rows || []) as T[]);
+                }
+              },
+            });
           });
-        });
-      })
-      .then(resolve)
-      .catch(reject);
-  });
+        })
+        .then(resolve)
+        .catch(reject);
+    });
+  } else {
+    // Local: Use single connection
+    const conn = await getConnection();
+    return new Promise((resolve, reject) => {
+      conn.execute({
+        sqlText: sql,
+        complete: (err, stmt, rows) => {
+          if (err) {
+            console.error("Query error:", err.message);
+            reject(err);
+          } else {
+            resolve((rows || []) as T[]);
+          }
+        },
+      });
+    });
+  }
 }
 ```
 
-**Note:** On first API request locally, a browser window opens for SSO login. The connection pool automatically handles stale connections - no manual retry logic needed.
+**Notes:**
+- **Local:** On first API request, browser opens for SSO login. Single connection is reused for all requests.
+- **Remote (SPCS):** Pool automatically handles stale connections, eviction, and concurrent requests.
 
 ### Create API Routes
 
