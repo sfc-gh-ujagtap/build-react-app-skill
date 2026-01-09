@@ -1,0 +1,22 @@
+spec:
+  containers:
+  - name: tpch-dashboard
+    image: /tpch_dashboard_db/spcs/images/tpch-dashboard:latest
+    env:
+      HOSTNAME: "0.0.0.0"
+      PORT: "8080"
+      NODE_ENV: production
+    resources:
+      requests:
+        memory: 1Gi
+        cpu: 500m
+      limits:
+        memory: 2Gi
+        cpu: 1000m
+    readinessProbe:
+      port: 8080
+      path: /
+  endpoints:
+  - name: tpch-dashboard
+    port: 8080
+    public: true

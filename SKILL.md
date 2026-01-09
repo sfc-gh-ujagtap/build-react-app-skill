@@ -24,7 +24,7 @@ Before writing any code, clarify with the user:
 
 ---
 
-## Step 1.5: Check Node.js Version (REQUIRED)
+## Step 2: Check Node.js Version (REQUIRED)
 
 Next.js 16+ requires Node.js >= 20.9.0. Check and upgrade if needed:
 
@@ -58,7 +58,7 @@ PATH="/opt/homebrew/opt/node@20/bin:$PATH" npx create-next-app@latest ...
 
 ---
 
-## Step 2: Create Next.js Project
+## Step 3: Create Next.js Project
 
 ```bash
 npx create-next-app@latest <app-name> --typescript --tailwind --eslint --app --src-dir=false --import-alias="@/*"
@@ -137,7 +137,7 @@ export default nextConfig;
 
 ---
 
-## Step 3: Build the Application
+## Step 4: Build the Application
 
 ### Project Structure
 ```
@@ -277,7 +277,7 @@ export async function GET() {
 
 ---
 
-## Step 4: Test Locally (REQUIRED)
+## Step 5: Test Locally (REQUIRED)
 
 ```bash
 npm run dev
@@ -306,7 +306,7 @@ npm run build
 
 ---
 
-## Step 5: Check SPCS Prerequisites
+## Step 6: Check SPCS Prerequisites
 
 ### Check Current Role
 
@@ -351,7 +351,7 @@ snow spcs image-registry login --connection <conn>
 
 ---
 
-## Step 6: Check Docker Prerequisite
+## Step 7: Check Docker Prerequisite
 
 Before building, verify Docker is installed:
 
@@ -428,7 +428,7 @@ docker run --rm hello-world
 
 ---
 
-## Step 7: Create Dockerfile
+## Step 8: Create Dockerfile
 
 ```dockerfile
 FROM node:20-alpine AS builder
@@ -457,7 +457,7 @@ CMD ["node", "server.js"]
 
 ---
 
-## Step 8: Create Service Specification
+## Step 9: Create Service Specification
 
 Create `service-spec.yaml`:
 
@@ -488,7 +488,7 @@ spec:
 
 ---
 
-## Step 9: Build and Push Docker Image
+## Step 10: Build and Push Docker Image
 
 ```bash
 docker build --platform linux/amd64 -t <image-name>:latest .
@@ -498,7 +498,7 @@ docker push <registry-url>/<db>/<schema>/<repo>/<image-name>:latest
 
 ---
 
-## Step 10: Deploy to SPCS
+## Step 11: Deploy to SPCS
 
 ```sql
 CREATE SERVICE <service_name>
@@ -517,7 +517,7 @@ SHOW ENDPOINTS IN SERVICE <service_name>;
 
 ---
 
-## Step 11: Verify Deployed Application
+## Step 12: Verify Deployed Application
 
 ```
 ai_browser(
