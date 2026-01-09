@@ -158,48 +158,44 @@ export default nextConfig;
 
 ### Create Snowflake Connection (lib/snowflake.ts)
 
-Connection is cached for performance, but includes automatic reconnection when Snowflake terminates idle connections (typically after 24+ hours).
+Uses connection pooling to automatically handle stale connections. The pool evicts idle connections and manages reconnection transparently.
 
 ```typescript
 import snowflake from "snowflake-sdk";
 import fs from "fs";
 
-let connection: snowflake.Connection | null = null;
-let connectionPromise: Promise<snowflake.Connection> | null = null;
-
 snowflake.configure({ logLevel: "ERROR" });
 
-// Reset cached connection (called on stale connection errors)
-function resetConnection() {
-  connection = null;
-  connectionPromise = null;
+let pool: snowflake.Pool<snowflake.Connection> | null = null;
+
+function getOAuthToken(): string | null {
+  const tokenPath = "/snowflake/session/token";
+  try {
+    if (fs.existsSync(tokenPath)) {
+      return fs.readFileSync(tokenPath, "utf8");
+    }
+  } catch (error) {
+    // Not in SPCS environment
+  }
+  return null;
 }
 
-async function getConnection(): Promise<snowflake.Connection> {
-  if (connection) return connection;
-  if (connectionPromise) return connectionPromise;
+function getPool(): snowflake.Pool<snowflake.Connection> {
+  if (pool) return pool;
 
-  connectionPromise = (async () => {
-    let connConfig: snowflake.ConnectionOptions;
-    let useAsyncConnect = false;
+  const oauthToken = getOAuthToken();
 
-    // SPCS environment - use OAuth token
-    const tokenPath = "/snowflake/session/token";
-    if (fs.existsSync(tokenPath)) {
-      const token = fs.readFileSync(tokenPath, "utf8");
-      const host = process.env.SNOWFLAKE_HOST || "";
-      connConfig = {
-        accessUrl: `https://${host}`,
-        account: host.split(".")[0] || "snowflake",
-        authenticator: "OAUTH",
-        token: token,
-        warehouse: process.env.SNOWFLAKE_WAREHOUSE || "COMPUTE_WH",
+  const connConfig: snowflake.ConnectionOptions = oauthToken
+    ? {
+        host: process.env.SNOWFLAKE_HOST,
+        account: process.env.SNOWFLAKE_ACCOUNT || "<account>",
+        token: oauthToken,
+        authenticator: "oauth",
+        warehouse: process.env.SNOWFLAKE_WAREHOUSE || "<warehouse>",
         database: process.env.SNOWFLAKE_DATABASE || "<database>",
         schema: process.env.SNOWFLAKE_SCHEMA || "<schema>",
-      };
-    } else {
-      // Local development - External Browser (SSO)
-      connConfig = {
+      }
+    : {
         account: process.env.SNOWFLAKE_ACCOUNT || "<account>",
         username: process.env.SNOWFLAKE_USER || "<username>",
         authenticator: "EXTERNALBROWSER",
@@ -207,83 +203,57 @@ async function getConnection(): Promise<snowflake.Connection> {
         database: process.env.SNOWFLAKE_DATABASE || "<database>",
         schema: process.env.SNOWFLAKE_SCHEMA || "<schema>",
       };
-      useAsyncConnect = true;
-    }
 
-    const conn = snowflake.createConnection(connConfig);
-
-    if (useAsyncConnect) {
-      await conn.connectAsync(() => {});
-      connection = conn;
-    } else {
-      connection = await new Promise<snowflake.Connection>((resolve, reject) => {
-        conn.connect((err, connResult) => {
-          if (err) {
-            console.error("Snowflake connection error:", err.message);
-            reject(err);
-          } else {
-            resolve(connResult);
-          }
-        });
-      });
-    }
-
-    return connection;
-  })();
-
-  return connectionPromise;
-}
-
-async function querySnowflake<T>(sql: string): Promise<T[]> {
-  const conn = await getConnection();
-  return new Promise((resolve, reject) => {
-    conn.execute({
-      sqlText: sql,
-      complete: (err, stmt, rows) => {
-        if (err) {
-          console.error("Query error:", err.message);
-          // Reset connection on termination errors so next query reconnects
-          if (err.message.includes("terminated connection") || (err as any).code === 407002) {
-            resetConnection();
-          }
-          reject(err);
-        } else {
-          resolve((rows || []) as T[]);
-        }
-      },
-    });
+  pool = snowflake.createPool(connConfig, {
+    max: 10,
+    min: 1,
+    evictionRunIntervalMillis: 60000,
+    idleTimeoutMillis: 300000,
   });
+
+  return pool;
 }
 
-// Use this function in API routes - auto-reconnects on stale connections
-export async function querySnowflakeWithRetry<T>(sql: string, retries = 1): Promise<T[]> {
-  try {
-    return await querySnowflake<T>(sql);
-  } catch (err: unknown) {
-    const error = err as { message?: string; code?: number };
-    if (retries > 0 && (error.message?.includes("terminated connection") || error.code === 407002)) {
-      resetConnection();
-      return querySnowflakeWithRetry<T>(sql, retries - 1);
-    }
-    throw err;
-  }
+export async function querySnowflake<T>(sql: string): Promise<T[]> {
+  const connectionPool = getPool();
+
+  return new Promise((resolve, reject) => {
+    connectionPool
+      .use(async (clientConnection) => {
+        return new Promise<T[]>((res, rej) => {
+          clientConnection.execute({
+            sqlText: sql,
+            complete: (err, stmt, rows) => {
+              if (err) {
+                console.error("Query error:", err.message);
+                rej(err);
+              } else {
+                res((rows || []) as T[]);
+              }
+            },
+          });
+        });
+      })
+      .then(resolve)
+      .catch(reject);
+  });
 }
 ```
 
-**Note:** On first API request locally, a browser window opens for SSO login. Connection is cached but auto-reconnects if Snowflake terminates it.
+**Note:** On first API request locally, a browser window opens for SSO login. The connection pool automatically handles stale connections - no manual retry logic needed.
 
 ### Create API Routes
 
-**All API routes MUST query real Snowflake data using `querySnowflakeWithRetry`:**
+**All API routes MUST query real Snowflake data using `querySnowflake`:**
 
 ```typescript
 // app/api/data/route.ts
 import { NextResponse } from "next/server";
-import { querySnowflakeWithRetry } from "@/lib/snowflake";
+import { querySnowflake } from "@/lib/snowflake";
 
 export async function GET() {
   try {
-    const results = await querySnowflakeWithRetry<{ COL1: string; COL2: number }>(`
+    const results = await querySnowflake<{ COL1: string; COL2: number }>(`
       SELECT COL1, COL2 
       FROM <DATABASE>.<SCHEMA>.<TABLE>
       LIMIT 100
