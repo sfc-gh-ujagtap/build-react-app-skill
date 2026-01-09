@@ -8,10 +8,6 @@ description: Build and Deploy React/Next.js apps to Snowflake
 ## Overview
 This skill guides you through building a Next.js application and deploying it to Snowflake using Snowpark Container Services (SPCS).
 
-**Authentication:**
-- **Local development:** External Browser (SSO) - opens browser for login, zero setup
-- **Production (SPCS):** OAuth token - automatic, no setup needed
-
 ---
 
 ## Step 1: Understand Requirements
@@ -24,37 +20,19 @@ Before writing any code, clarify with the user:
 
 ---
 
-## Step 2: Check Node.js Version (REQUIRED)
+## Step 2: Prerequisites
 
-Next.js 16+ requires Node.js >= 20.9.0. Check and upgrade if needed:
-
+### Node.js 20+
 ```bash
-node --version
+node --version  # Must be v20.x.x or higher
 ```
+If below 20, install via [nodejs.org](https://nodejs.org/), Homebrew (`brew install node@20`), or nvm (`nvm install 20`).
 
-**If Node < 20.9.0, install Node 20:**
-
-**macOS (Homebrew):**
+### Docker
 ```bash
-brew install node@20
-export PATH="/opt/homebrew/opt/node@20/bin:$PATH"
+docker --version
 ```
-
-**Or use nvm:**
-```bash
-nvm install 20
-nvm use 20
-```
-
-**Verify before proceeding:**
-```bash
-node --version  # Must show v20.x.x or higher
-```
-
-**IMPORTANT:** If Node 20 is installed via Homebrew as a keg-only formula, you must set the PATH before running npm/npx commands:
-```bash
-PATH="/opt/homebrew/opt/node@20/bin:$PATH" npx create-next-app@latest ...
-```
+If not installed, download from [docker.com](https://www.docker.com/products/docker-desktop/).
 
 ---
 
@@ -95,33 +73,6 @@ npm install recharts@2.15.4
 npm install lucide-react snowflake-sdk
 ```
 
-### shadcn Chart Usage Pattern
-
-**Always use shadcn chart components with CSS variables for colors:**
-
-```typescript
-import { ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent, ChartLegend, ChartLegendContent } from "@/components/ui/chart"
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { TrendingUp } from "lucide-react"
-
-const chartConfig = {
-  revenue: { label: "Revenue", color: "hsl(var(--chart-1))" },
-  orders: { label: "Orders", color: "hsl(var(--chart-2))" },
-} satisfies ChartConfig
-
-// Use var(--color-<key>) in chart fills/strokes
-<Bar dataKey="revenue" fill="var(--color-revenue)" />
-
-// Always include CardFooter with trend indicator
-<CardFooter className="flex-col gap-2 text-sm">
-  <div className="flex items-center gap-2 font-medium leading-none">
-    Trending up by 5.2% <TrendingUp className="h-4 w-4" />
-  </div>
-</CardFooter>
-```
-
-**Available chart colors:** `--chart-1` through `--chart-5` (defined in globals.css)
-
 ### Configure next.config.ts
 
 ```typescript
@@ -137,7 +88,41 @@ export default nextConfig;
 
 ---
 
-## Step 4: Build the Application
+## Step 4: Connections & Authentication
+
+### Overview
+
+| Environment | Auth Method | How It Works |
+|-------------|-------------|--------------|
+| **Local Development** | External Browser (SSO) | Opens browser for login on first API request |
+| **SPCS Production** | OAuth Token | Auto-injected at `/snowflake/session/token` |
+
+### Environment Variables
+
+| Variable | Local | SPCS | Description |
+|----------|-------|------|-------------|
+| `SNOWFLAKE_ACCOUNT` | Required | - | Account identifier (e.g., `xy12345.us-east-1`) |
+| `SNOWFLAKE_USER` | Required | - | Your Snowflake username |
+| `SNOWFLAKE_WAREHOUSE` | Required | Required | Warehouse to use for queries |
+| `SNOWFLAKE_DATABASE` | Required | Required | Default database |
+| `SNOWFLAKE_SCHEMA` | Required | Required | Default schema |
+| `SNOWFLAKE_HOST` | - | Auto-set | SPCS host (auto-injected by SPCS) |
+
+### How Detection Works
+
+The app detects its environment by checking for the SPCS token file:
+```typescript
+function isRunningInSPCS(): boolean {
+  return fs.existsSync("/snowflake/session/token");
+}
+```
+
+- **Token exists** → Running in SPCS → Use OAuth with connection pool
+- **No token** → Local development → Use External Browser with single connection
+
+---
+
+## Step 5: Build the Application
 
 ### Project Structure
 ```
@@ -157,10 +142,6 @@ export default nextConfig;
 ```
 
 ### Create Snowflake Connection (lib/snowflake.ts)
-
-**Two modes:**
-- **Local development:** Single connection with external browser (SSO) auth - simpler, works with interactive login
-- **Remote (SPCS):** Connection pooling with OAuth token - handles concurrent requests and stale connections
 
 ```typescript
 import snowflake from "snowflake-sdk";
@@ -232,7 +213,6 @@ function getPool(): snowflake.Pool<snowflake.Connection> {
 // ============ Unified Query Function ============
 export async function querySnowflake<T>(sql: string): Promise<T[]> {
   if (isRunningInSPCS()) {
-    // Remote: Use connection pool
     const connectionPool = getPool();
     return new Promise((resolve, reject) => {
       connectionPool
@@ -255,7 +235,6 @@ export async function querySnowflake<T>(sql: string): Promise<T[]> {
         .catch(reject);
     });
   } else {
-    // Local: Use single connection
     const conn = await getConnection();
     return new Promise((resolve, reject) => {
       conn.execute({
@@ -273,10 +252,6 @@ export async function querySnowflake<T>(sql: string): Promise<T[]> {
   }
 }
 ```
-
-**Notes:**
-- **Local:** On first API request, browser opens for SSO login. Single connection is reused for all requests.
-- **Remote (SPCS):** Pool automatically handles stale connections, eviction, and concurrent requests.
 
 ### Create API Routes
 
@@ -302,9 +277,36 @@ export async function GET() {
 }
 ```
 
+### shadcn Chart Usage Pattern
+
+**Always use shadcn chart components with CSS variables for colors:**
+
+```typescript
+import { ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent, ChartLegend, ChartLegendContent } from "@/components/ui/chart"
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import { TrendingUp } from "lucide-react"
+
+const chartConfig = {
+  revenue: { label: "Revenue", color: "hsl(var(--chart-1))" },
+  orders: { label: "Orders", color: "hsl(var(--chart-2))" },
+} satisfies ChartConfig
+
+// Use var(--color-<key>) in chart fills/strokes
+<Bar dataKey="revenue" fill="var(--color-revenue)" />
+
+// Always include CardFooter with trend indicator
+<CardFooter className="flex-col gap-2 text-sm">
+  <div className="flex items-center gap-2 font-medium leading-none">
+    Trending up by 5.2% <TrendingUp className="h-4 w-4" />
+  </div>
+</CardFooter>
+```
+
+**Available chart colors:** `--chart-1` through `--chart-5` (defined in globals.css)
+
 ---
 
-## Step 5: Test Locally (REQUIRED)
+## Step 6: Test Locally (REQUIRED)
 
 ```bash
 npm run dev
@@ -333,7 +335,7 @@ npm run build
 
 ---
 
-## Step 6: Check SPCS Prerequisites
+## Step 7: SPCS Prerequisites
 
 ### Check Current Role
 
@@ -344,22 +346,16 @@ SELECT CURRENT_ROLE(), CURRENT_USER();
 ### Check/Create Compute Pool
 
 ```sql
--- List pools accessible to current role (check 'owner' column)
 SHOW COMPUTE POOLS;
 
--- Verify current role can use the pool (owner must match or have USAGE grant)
-SELECT CURRENT_ROLE();
--- Pool owner must equal current role, OR run:
-SHOW GRANTS ON COMPUTE POOL <pool_name>;
-
--- If no accessible pool exists, create one (will be owned by current role):
+-- If no accessible pool exists:
 CREATE COMPUTE POOL <pool_name>
   MIN_NODES = 1
   MAX_NODES = 1
   INSTANCE_FAMILY = CPU_X64_XS;
 ```
 
-**IMPORTANT:** You can only use compute pools owned by your current role or where you have USAGE privilege. If `CREATE SERVICE` fails with "not authorized", switch to a pool your role owns.
+**Note:** You can only use compute pools owned by your current role or where you have USAGE privilege.
 
 ### Check/Create Image Repository
 
@@ -374,83 +370,6 @@ CREATE IMAGE REPOSITORY <db>.<schema>.<repo_name>;
 
 ```bash
 snow spcs image-registry login --connection <conn>
-```
-
----
-
-## Step 7: Check Docker Prerequisite
-
-Before building, verify Docker is installed:
-
-```bash
-docker --version 2>/dev/null || echo "DOCKER_NOT_INSTALLED"
-```
-
-### If Docker is NOT installed, install it automatically:
-
-**macOS:**
-```bash
-# Check if Homebrew is installed
-if ! command -v brew &> /dev/null; then
-    echo "Installing Homebrew first..."
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-fi
-
-# Install Docker Desktop via Homebrew
-brew install --cask docker
-
-# Open Docker Desktop (required to start Docker daemon)
-open -a Docker
-
-echo "Waiting for Docker to start..."
-while ! docker info &> /dev/null; do
-    sleep 2
-done
-echo "Docker is ready!"
-```
-
-**Linux (Ubuntu/Debian):**
-```bash
-# Remove old versions
-sudo apt-get remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
-
-# Install prerequisites
-sudo apt-get update
-sudo apt-get install -y ca-certificates curl gnupg
-
-# Add Docker GPG key
-sudo install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-sudo chmod a+r /etc/apt/keyrings/docker.gpg
-
-# Add Docker repository
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-# Install Docker
-sudo apt-get update
-sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
-# Add user to docker group (avoids sudo)
-sudo usermod -aG docker $USER
-echo "Log out and back in for group changes to take effect, or run: newgrp docker"
-```
-
-**Windows (PowerShell as Admin):**
-```powershell
-# Install via winget
-winget install -e --id Docker.DockerDesktop
-
-# Or download installer
-Invoke-WebRequest -Uri "https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe" -OutFile "DockerInstaller.exe"
-Start-Process -Wait -FilePath ".\DockerInstaller.exe" -ArgumentList "install", "--quiet"
-Remove-Item ".\DockerInstaller.exe"
-
-Write-Host "Please restart your computer to complete Docker installation"
-```
-
-### Verify Docker is working:
-```bash
-docker run --rm hello-world
 ```
 
 ---
@@ -535,17 +454,16 @@ CREATE SERVICE <service_name>
   $$;
 ```
 
-### Monitor and Get URL
+### Monitor, Get URL, and Verify
 
 ```sql
 SELECT SYSTEM$GET_SERVICE_STATUS('<service_name>');
 SHOW ENDPOINTS IN SERVICE <service_name>;
 ```
 
----
+**IMPORTANT:** Extract the `ingress_url` from SHOW ENDPOINTS and **display it to the user**.
 
-## Step 12: Verify Deployed Application
-
+Verify the deployed app:
 ```
 ai_browser(
   initial_url="https://<ingress_url>",
@@ -568,21 +486,3 @@ ALTER SERVICE <service_name> FROM SPECIFICATION $$
 <full yaml spec>
 $$;
 ```
-
----
-
-## Quick Reference
-
-| Step | Command/Action |
-|------|----------------|
-| Create project | `npx create-next-app@latest <name> --typescript --tailwind --app` |
-| Init shadcn | `npx shadcn@latest init -d` |
-| Add components | `npx shadcn@latest add card chart button table select input tabs badge skeleton dialog dropdown-menu separator tooltip` |
-| Install deps | `npm install recharts@2.15.4 lucide-react snowflake-sdk` |
-| Test locally | `npm run dev` → browser opens for SSO |
-| Build | `npm run build` |
-| Docker build | `docker build --platform linux/amd64 -t <img>:latest .` |
-| Push image | `docker push <registry>/<db>/<schema>/<repo>/<img>:latest` |
-| Deploy | `CREATE SERVICE ... FROM SPECIFICATION ...` |
-| Check status | `SELECT SYSTEM$GET_SERVICE_STATUS('<svc>')` |
-| Get URL | `SHOW ENDPOINTS IN SERVICE <svc>` |
