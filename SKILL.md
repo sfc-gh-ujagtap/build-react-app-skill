@@ -299,6 +299,20 @@ const chartConfig = {
 
 **Available chart colors:** `--chart-1` through `--chart-5` (defined in globals.css)
 
+### Dashboard Design System
+
+When building dashboards or analytics apps, follow these principles for consistent, professional results:
+
+1. **Color**: Use CSS variables (`--chart-1` to `--chart-5`) for all chart/accent colors - never hardcode. Reference as `hsl(var(--chart-X))` in ChartConfig, `text-chart-X` in Tailwind classes.
+
+2. **Components**: Use shadcn/ui for all primitives (Card, Table, Badge, Skeleton) - never raw HTML tables or custom badges. Use Recharts wrapped in `ChartContainer`. Use Lucide for icons.
+
+3. **Layout**: Use 6-column responsive stat grid (`grid-cols-2 md:grid-cols-3 lg:grid-cols-6`), 2-column chart grid (`grid-cols-1 lg:grid-cols-2`). Consistent spacing with `space-y-6` for sections, `gap-4`/`gap-6` for grids.
+
+4. **Chart Cards**: Fixed `h-[300px] w-full` for all `ChartContainer` elements. Structure as Header (CardTitle + CardDescription) → Content (chart) → Footer (insight with TrendingUp icon). Define `ChartConfig` with `{ label, color: "hsl(var(--chart-X))" }` per data series.
+
+5. **State**: Global filters (e.g., date range) via React Context. Use Skeleton loading states that match layout structure. API routes return UPPERCASE field names from SQL queries.
+
 ---
 
 ## Step 6: Test Locally (REQUIRED)
