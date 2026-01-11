@@ -1,9 +1,9 @@
 ---
 name: build-react-app-skill
-description: Build and deploy data-intensive React/Next.js applications to Snowflake. Creates distinctive, production-grade interfaces with real-time Snowflake data.
+description: Build React Apps that use Snowflake data and are deployed to SPCS.
 ---
 
-# Build Data-Intensive Apps for Snowflake
+# Build and Deploy React Apps that use Snowflake Data
 
 ## Overview
 This skill guides you through building data-intensive Next.js applications and deploying them to Snowflake using Snowpark Container Services (SPCS). Create dashboards, analytics tools, admin panels, customer-facing data products, and more.
