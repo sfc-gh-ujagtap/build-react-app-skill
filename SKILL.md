@@ -1,12 +1,12 @@
 ---
 name: build-react-app-skill
-description: Build and Deploy React/Next.js apps to Snowflake
+description: Build and deploy data-intensive React/Next.js applications to Snowflake. Creates distinctive, production-grade interfaces with real-time Snowflake data.
 ---
 
-# Build and Deploy React/Next.js App to Snowflake SPCS
+# Build Data-Intensive Apps for Snowflake
 
 ## Overview
-This skill guides you through building a Next.js application and deploying it to Snowflake using Snowpark Container Services (SPCS).
+This skill guides you through building data-intensive Next.js applications and deploying them to Snowflake using Snowpark Container Services (SPCS). Create dashboards, analytics tools, admin panels, customer-facing data products, and more.
 
 ---
 
@@ -14,39 +14,58 @@ This skill guides you through building a Next.js application and deploying it to
 
 Before writing any code, clarify with the user:
 - What data should the app use? (Search for tables/views using `snowflake_object_search`)
-- Any specific UI preferences? (Colors, layout, branding)
+- What type of application? (Dashboard, admin panel, customer-facing tool, data explorer)
+- Any specific aesthetic direction? (Minimal, bold, playful, enterprise, etc.)
 
 **CRITICAL: NEVER use mock/hardcoded data. Always connect to real Snowflake tables.**
 
 ---
 
-## Step 2: Prerequisites
+## Step 2: Design Principles
 
-### Node.js 20+
-```bash
-node --version  # Must be v20.x.x or higher
-```
-If below 20, install via [nodejs.org](https://nodejs.org/), Homebrew (`brew install node@20`), or nvm (`nvm install 20`).
+Before coding, commit to a clear aesthetic direction. Data apps should be functional AND visually distinctive.
 
-### Docker
-```bash
-docker --version
-```
-If not installed, download from [docker.com](https://www.docker.com/products/docker-desktop/).
+### Design Thinking
+- **Purpose**: What problem does this interface solve? Who uses it?
+- **Tone**: Choose a direction - minimal/refined, bold/maximalist, playful, editorial, industrial, soft/approachable. Match the brand and audience.
+- **Differentiation**: What makes this memorable? Avoid generic "AI slop" aesthetics.
+
+### Aesthetic Guidelines
+
+**Typography**: Choose fonts with character. Avoid overused defaults (Inter, Roboto, Arial). Pair a distinctive display font with a refined body font. shadcn defaults are acceptable but consider customizing for brand alignment.
+
+**Color**: Use CSS variables (`--chart-1` through `--chart-5`) for data visualization - never hardcode colors. For UI, commit to a cohesive palette. Dominant colors with sharp accents outperform timid, evenly-distributed palettes. Support dark mode.
+
+**Motion**: Add purposeful animations for delight. Focus on high-impact moments: page load reveals, hover states, transitions between data states. Use CSS transitions or Framer Motion. One well-orchestrated animation creates more impact than scattered micro-interactions.
+
+**Layout**: Be intentional about density. Data-heavy apps can embrace density with clear hierarchy. Generous whitespace works for focused tools. Use consistent spacing tokens (`space-y-6`, `gap-4`/`gap-6`).
+
+**Visual Details**: Create atmosphere beyond flat backgrounds. Consider subtle gradients, grain textures, shadows for depth, or geometric patterns that match the aesthetic.
+
+### What to Avoid
+- Generic purple gradients on white backgrounds
+- Cookie-cutter layouts without context-specific character
+- Inconsistent spacing and sizing
+- Raw HTML elements when shadcn components exist
+- Hardcoded colors instead of CSS variables
 
 ---
 
-## Step 3: Create Next.js Project
+## Step 3: Tech Stack (Required)
 
+### Prerequisites
+```bash
+node --version  # Must be v20.x.x or higher
+docker --version
+```
+
+### Create Next.js Project
 ```bash
 npx create-next-app@latest <app-name> --typescript --tailwind --eslint --app --src-dir=false --import-alias="@/*"
 cd <app-name>
 ```
 
 ### Initialize shadcn/ui (REQUIRED)
-
-**IMPORTANT:** Always use shadcn/ui for UI components. This ensures consistent, professional styling.
-
 ```bash
 npx shadcn@latest init -d
 ```
@@ -54,27 +73,19 @@ npx shadcn@latest init -d
 This creates:
 - `components/ui/` directory for shadcn components
 - `lib/utils.ts` with the `cn()` helper
-- Proper CSS variables in `globals.css`
+- CSS variables in `globals.css`
 
-### Add Required shadcn Components
-
+### Add shadcn Components
 ```bash
-npx shadcn@latest add card chart button table select input tabs badge skeleton dialog dropdown-menu separator tooltip
+npx shadcn@latest add card chart button table select input tabs badge skeleton dialog dropdown-menu separator tooltip sidebar
 ```
 
-**CRITICAL for Charts:** Use `recharts@2.15.4` (the version shadcn specifies):
+### Install Dependencies
 ```bash
-npm install recharts@2.15.4
-```
-
-### Install Additional Dependencies
-
-```bash
-npm install lucide-react snowflake-sdk
+npm install recharts@2.15.4 lucide-react snowflake-sdk
 ```
 
 ### Configure next.config.ts
-
 ```typescript
 import type { NextConfig } from "next";
 
@@ -108,38 +119,7 @@ export default nextConfig;
 | `SNOWFLAKE_SCHEMA` | Required | Required | Default schema |
 | `SNOWFLAKE_HOST` | - | Auto-set | SPCS host (auto-injected by SPCS) |
 
-### How Detection Works
-
-The app detects its environment by checking for the SPCS token file at `/snowflake/session/token`:
-- **Token exists** → Running in SPCS → Use OAuth authentication
-- **No token** → Local development → Use External Browser (SSO)
-
-Both environments use a single cached connection with retry logic for simplicity.
-
----
-
-## Step 5: Build the Application
-
-### Project Structure
-```
-<app-name>/
-├── app/
-│   ├── page.tsx
-│   ├── layout.tsx
-│   ├── globals.css
-│   └── api/
-├── components/
-├── lib/
-│   ├── snowflake.ts      # Snowflake connection (REQUIRED)
-│   └── utils.ts
-├── Dockerfile
-├── service-spec.yaml
-└── next.config.ts
-```
-
-### Create Snowflake Connection (lib/snowflake.ts)
-
-This simplified pattern uses a single cached connection with retry logic for both local and SPCS environments:
+### Snowflake Connection (lib/snowflake.ts)
 
 ```typescript
 import snowflake from "snowflake-sdk";
@@ -242,15 +222,30 @@ export async function query<T>(sql: string, retries = 1): Promise<T[]> {
 }
 ```
 
-**Key features:**
-- Single connection for both environments (no pool complexity)
-- Auto-detects SPCS via token file presence
-- Handles OAuth token refresh by comparing cached vs current token
-- Retry logic handles session timeouts and expired tokens
+---
 
-### Create API Routes
+## Step 5: Build the Application
 
-**All API routes MUST query real Snowflake data using `query`:**
+### Project Structure
+```
+<app-name>/
+├── app/
+│   ├── page.tsx
+│   ├── layout.tsx
+│   ├── globals.css
+│   └── api/
+├── components/
+├── lib/
+│   ├── snowflake.ts
+│   └── utils.ts
+├── Dockerfile
+├── service-spec.yaml
+└── next.config.ts
+```
+
+### API Routes
+
+All API routes MUST query real Snowflake data:
 
 ```typescript
 // app/api/data/route.ts
@@ -272,46 +267,32 @@ export async function GET() {
 }
 ```
 
-### shadcn Chart Usage Pattern
+### Component Guidelines
 
-**Always use shadcn chart components with CSS variables for colors:**
+**Use shadcn/ui components** - Never raw HTML tables, inputs, or buttons:
+- `Card` for content containers
+- `Table` for data tables
+- `Badge` for status indicators
+- `Skeleton` for loading states
+- `ChartContainer` for all charts
 
-```typescript
-import { ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent, ChartLegend, ChartLegendContent } from "@/components/ui/chart"
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { TrendingUp } from "lucide-react"
+**Charts**: Use shadcn's `ChartContainer` wrapper with Recharts. Define `ChartConfig` with `hsl(var(--chart-X))` colors, reference as `var(--color-<key>)` in fills/strokes.
 
-const chartConfig = {
-  revenue: { label: "Revenue", color: "hsl(var(--chart-1))" },
-  orders: { label: "Orders", color: "hsl(var(--chart-2))" },
-} satisfies ChartConfig
+**Icons**: Use Lucide React consistently.
 
-// Use var(--color-<key>) in chart fills/strokes
-<Bar dataKey="revenue" fill="var(--color-revenue)" />
+**State Management**: 
+- Global filters (date ranges, etc.) via React Context
+- Loading states with Skeleton components matching layout structure
+- API returns UPPERCASE field names from SQL
 
-// Always include CardFooter with trend indicator
-<CardFooter className="flex-col gap-2 text-sm">
-  <div className="flex items-center gap-2 font-medium leading-none">
-    Trending up by 5.2% <TrendingUp className="h-4 w-4" />
-  </div>
-</CardFooter>
-```
+### Dashboard Pattern (Recommended for Analytics)
 
-**Available chart colors:** `--chart-1` through `--chart-5` (defined in globals.css)
+For analytics dashboards, this pattern works well:
 
-### Dashboard Design System
-
-When building dashboards or analytics apps, follow these principles for consistent, professional results:
-
-1. **Color**: Use CSS variables (`--chart-1` to `--chart-5`) for all chart/accent colors - never hardcode. Reference as `hsl(var(--chart-X))` in ChartConfig, `text-chart-X` in Tailwind classes.
-
-2. **Components**: Use shadcn/ui for all primitives (Card, Table, Badge, Skeleton) - never raw HTML tables or custom badges. Use Recharts wrapped in `ChartContainer`. Use Lucide for icons.
-
-3. **Layout**: Use 6-column responsive stat grid (`grid-cols-2 md:grid-cols-3 lg:grid-cols-6`), 2-column chart grid (`grid-cols-1 lg:grid-cols-2`). Consistent spacing with `space-y-6` for sections, `gap-4`/`gap-6` for grids.
-
-4. **Chart Cards**: Fixed `h-[300px] w-full` for all `ChartContainer` elements. Structure as Header (CardTitle + CardDescription) → Content (chart) → Footer (insight with TrendingUp icon). Define `ChartConfig` with `{ label, color: "hsl(var(--chart-X))" }` per data series.
-
-5. **State**: Global filters (e.g., date range) via React Context. Use Skeleton loading states that match layout structure. API routes return UPPERCASE field names from SQL queries.
+1. **Stat Cards Row**: Responsive grid (`grid-cols-2 md:grid-cols-3 lg:grid-cols-6`) for KPI metrics
+2. **Chart Grid**: 2-column on large screens (`grid-cols-1 lg:grid-cols-2`)
+3. **Consistent Chart Heights**: Use uniform heights within rows for visual balance
+4. **Card Structure**: Header (title + description) → Content (visualization) → Footer (insight/trend)
 
 ---
 
@@ -324,21 +305,17 @@ npm run dev
 App runs at `http://localhost:3000`. Browser opens for SSO on first API request.
 
 ### Verify Using Browser Tool
-
 ```
 ai_browser(
   initial_url="http://localhost:3000",
-  instructions="Verify dashboard loads with REAL Snowflake data."
+  instructions="Verify app loads with REAL Snowflake data and UI is polished."
 )
 ```
 
 ### Build Test
-
 ```bash
 npm run build
 ```
-
-### **USER CONFIRMATION REQUIRED**
 
 **STOP HERE.** Ask user to confirm the app looks correct before SPCS deployment.
 
@@ -347,13 +324,11 @@ npm run build
 ## Step 7: SPCS Prerequisites
 
 ### Check Current Role
-
 ```sql
 SELECT CURRENT_ROLE(), CURRENT_USER();
 ```
 
 ### Check/Create Compute Pool
-
 ```sql
 SHOW COMPUTE POOLS;
 
@@ -364,10 +339,7 @@ CREATE COMPUTE POOL <pool_name>
   INSTANCE_FAMILY = CPU_X64_XS;
 ```
 
-**Note:** You can only use compute pools owned by your current role or where you have USAGE privilege.
-
 ### Check/Create Image Repository
-
 ```sql
 SHOW IMAGE REPOSITORIES;
 
@@ -376,7 +348,6 @@ CREATE IMAGE REPOSITORY <db>.<schema>.<repo_name>;
 ```
 
 ### Login to Registry
-
 ```bash
 snow spcs image-registry login --connection <conn>
 ```
@@ -470,13 +441,13 @@ SELECT SYSTEM$GET_SERVICE_STATUS('<service_name>');
 SHOW ENDPOINTS IN SERVICE <service_name>;
 ```
 
-**IMPORTANT:** Extract the `ingress_url` from SHOW ENDPOINTS and **display it to the user**.
+**IMPORTANT:** Extract the `ingress_url` from SHOW ENDPOINTS and display it to the user.
 
 Verify the deployed app:
 ```
 ai_browser(
   initial_url="https://<ingress_url>",
-  instructions="Verify dashboard loads with real Snowflake data."
+  instructions="Verify app loads with real Snowflake data."
 )
 ```
 
